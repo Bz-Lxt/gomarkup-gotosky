@@ -73,13 +73,18 @@ func main() {
 	})
 
 	// Recovery scan: mark interrupted, do not silently drop.
+	// Sessions that already recorded a safety/permanent fault are left
+	// in ERROR with their original LastError intact; only genuinely
+	// in-flight sessions (no prior error) are stamped INTERRUPTED.
 	if incs, err := st.IncompleteSessions(ctx); err == nil {
 		for _, s := range incs {
 			from := s.State
 			s.State = "ERROR"
-			s.LastError = "INTERRUPTED"
 			now := time.Now()
 			s.EndedAt = &now
+			if s.LastError == "" {
+				s.LastError = "INTERRUPTED"
+			}
 			_ = st.SaveSession(ctx, s)
 			_ = st.AppendEvent(ctx, domain.SessionEvent{
 				ID: uuid.New(), SessionID: s.ID, FromState: from, ToState: "ERROR", Class: "TRANSIENT",

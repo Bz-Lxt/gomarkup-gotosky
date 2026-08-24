@@ -233,8 +233,17 @@ func retry(ctx context.Context, fn func(context.Context) error) error {
 func (a *SessionActor) onFail(ctx context.Context, err error) error {
 	cl := Classify(err)
 	if cl == ClassSafety {
-		_ = a.transition(ctx, "ERROR", string(cl), err.Error())
-		return a.execState(ctx, "PARKING", a.drv.Park)
+		// Park the mount for safety, then settle on a terminal ERROR
+		// state that preserves the original safety fault (e.g.
+		// RainDetected).  We drive Park through retry/timeout directly
+		// rather than execState so LastError is never cleared mid-flow;
+		// that way the safety reason survives even if the service is
+		// restarted while parking is still in progress.
+		_ = a.transition(ctx, "PARKING", string(cl), err.Error())
+		cctx, cancel := context.WithTimeout(ctx, TimeoutOf("PARKING", a.exposeS))
+		_ = retry(cctx, a.drv.Park)
+		cancel()
+		return a.transition(ctx, "ERROR", string(cl), err.Error())
 	}
 	return a.transition(ctx, "ERROR", string(cl), err.Error())
 }
